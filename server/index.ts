@@ -56,19 +56,6 @@ app.use(express.json({ limit: '1mb' }));
  * ============================================================
  */
 
-/**
- * Extract retry time from Gemini's error message.
- *
- * Example Gemini message:
- *
- * "Please retry in 26.136965447s."
- *
- * Returns:
- *
- * 26
- *
- * If no retry time can be found, returns null.
- */
 function extractRetryAfterSeconds(
   error: any
 ): number | null {
@@ -76,13 +63,6 @@ function extractRetryAfterSeconds(
     error?.message ||
     String(error || '');
 
-  /*
-   * Match:
-   *
-   * retry in 26s
-   * retry in 26.13s
-   * retry after 26 seconds
-   */
   const retryMatch = message.match(
     /retry\s+(?:in|after)\s+([\d.]+)\s*(?:s|sec|seconds)/i
   );
@@ -100,9 +80,6 @@ function extractRetryAfterSeconds(
     }
   }
 
-  /*
-   * Try Google's structured RetryInfo if available.
-   */
   try {
     const retryDelay =
       error?.errorDetails
@@ -140,9 +117,6 @@ function extractRetryAfterSeconds(
   return null;
 }
 
-/**
- * Detect whether an error is a Gemini rate/quota error.
- */
 function isGeminiRateLimitError(
   error: any
 ): boolean {
@@ -166,9 +140,6 @@ function isGeminiRateLimitError(
   );
 }
 
-/**
- * Return a clean API error response.
- */
 function sendGeminiError(
   res: express.Response,
   error: any
@@ -211,9 +182,6 @@ function sendGeminiError(
     });
   }
 
-  /*
-   * API key/configuration problem.
-   */
   if (
     originalMessage.includes(
       'GEMINI_API_KEY_NOT_CONFIGURED'
@@ -235,9 +203,6 @@ function sendGeminiError(
     });
   }
 
-  /*
-   * Other Gemini/API errors.
-   */
   console.error(
     'Gemini API error:',
     originalMessage
@@ -257,47 +222,6 @@ function sendGeminiError(
 
     demoAvailable: true,
   });
-}
-
-/*
- * ============================================================
- * EXACT DEMO / PRESET CHECK
- * ============================================================
- */
-
-/**
- * Returns true only when the COMPLETE trimmed text
- * exactly matches one of the preset/demo messages.
- *
- * No partial matching.
- * No keyword matching.
- * No heuristic analysis.
- */
-function isExactPresetText(
-  text: string
-): boolean {
-  return Object.prototype.hasOwnProperty.call(
-    PRESET_ANALYSES,
-    text
-  );
-}
-
-/**
- * Return the exact preset result.
- */
-function getExactPresetResult(
-  text: string
-) {
-  if (!isExactPresetText(text)) {
-    return null;
-  }
-
-  return (
-    PRESET_ANALYSES as Record<
-      string,
-      any
-    >
-  )[text];
 }
 
 /*
@@ -331,10 +255,6 @@ app.get('/api/health', (_req, res) => {
 
     hasGeminiKey,
 
-    /*
-     * Demo/preset analysis is always available
-     * for exact preset messages.
-     */
     demoAvailable: true,
 
     presetCount:
@@ -358,12 +278,6 @@ app.post(
       const { apiKey } =
         req.body ?? {};
 
-      /*
-       * If the user supplies a key,
-       * test that exact key.
-       *
-       * Otherwise use the server key.
-       */
       const keyToTest =
         typeof apiKey === 'string' &&
         apiKey.trim().length > 0
@@ -406,11 +320,6 @@ app.post(
           model: 'gemini-3.6-flash',
         });
 
-      /*
-       * This request DOES consume Gemini API quota.
-       *
-       * Therefore, do not call Test Connection repeatedly.
-       */
       await model.generateContent(
         'Reply with exactly: OK'
       );
@@ -510,6 +419,7 @@ app.post(
       const {
         text,
         forceDemo,
+        presetId,
         apiKey,
       } =
         req.body as AnalyzeRequest;
@@ -541,24 +451,34 @@ app.post(
 
       /*
        * --------------------------------------------------------
-       * EXACT DEMO/PRESET BYPASS
+       * DEMO / PRESET ANALYSIS
        * --------------------------------------------------------
        *
-       * Only an EXACT preset message can use demo mode.
+       * Demo analysis now uses the preset ID.
        *
-       * This works even when Gemini is unavailable.
+       * Example:
        *
-       * forceDemo is intentionally NOT enough by itself.
+       * presetId = "lottery"
+       *
+       * becomes:
+       *
+       * PRESET_ANALYSES["lottery"]
+       *
+       * This avoids comparing the entire demo message text
+       * against the backend analysis object.
        */
 
       const presetResult =
-        getExactPresetResult(
-          trimmedText
-        );
+        presetId
+          ? PRESET_ANALYSES[presetId]
+          : null;
 
-      if (presetResult) {
+      if (
+        forceDemo &&
+        presetResult
+      ) {
         console.log(
-          'EXACT DEMO PRESET USED'
+          `EXACT DEMO PRESET USED: ${presetId}`
         );
 
         return res.status(200).json({
@@ -576,11 +496,8 @@ app.post(
 
       /*
        * --------------------------------------------------------
-       * IMPORTANT:
+       * INVALID DEMO REQUEST
        * --------------------------------------------------------
-       *
-       * If forceDemo is requested for a message that is NOT
-       * an exact preset, DO NOT analyze it.
        */
 
       if (forceDemo) {
@@ -605,9 +522,8 @@ app.post(
        * GEMINI ANALYSIS
        * --------------------------------------------------------
        *
-       * Any non-demo message MUST go through Gemini.
-       *
-       * There is NO heuristic fallback here.
+       * Non-demo messages continue to use Gemini exactly
+       * as before.
        */
 
       const result =
@@ -626,13 +542,7 @@ app.post(
       );
 
       /*
-       * --------------------------------------------------------
-       * IMPORTANT:
-       *
-       * NEVER use analyzeThreatHeuristically()
-       * as a fallback here.
-       *
-       * If Gemini fails, the message was NOT analyzed.
+       * NEVER use heuristic fallback here.
        */
 
       return sendGeminiError(

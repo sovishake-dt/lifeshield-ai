@@ -285,6 +285,7 @@ export const App: React.FC = () => {
              * Exact demo:
              * key is optional.
              */
+	    presetId: foundPreset?.id,
             apiKey:
               userApiKey.trim() ||
               undefined,

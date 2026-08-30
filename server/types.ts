@@ -56,5 +56,6 @@ export interface SystemHealth {
 export interface AnalyzeRequest {
   text: string;
   forceDemo?: boolean;
+  presetId?: string;
   apiKey?: string;
 }
