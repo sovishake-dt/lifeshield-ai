@@ -137,7 +137,7 @@ app.post('/api/verify-key', async (req, res) => {
      * to this model, the response below will explain the error.
      */
     const model = genAI.getGenerativeModel({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3.6-flash',
     });
 
     /*
