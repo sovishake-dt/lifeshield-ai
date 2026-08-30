@@ -38,7 +38,7 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
     setVerificationResult(null);
 
     try {
-      const res = await fetch('/api/verify-key', {
+      const res = await fetch('https://lifeshield-ai-api.onrender.com/api/verify-key', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ apiKey: apiKeyInput.trim() }),

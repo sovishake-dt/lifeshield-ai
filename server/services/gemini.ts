@@ -2,238 +2,423 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import { SecurityAnalysis } from '../types.js';
 import { analyzeThreatHeuristically } from './threatAnalyzer.js';
 
-const SYSTEM_INSTRUCTION = `You are LifeShield AI, an elite cybersecurity and fraud intelligence analysis engine.
+const SYSTEM_INSTRUCTION = `
+You are LifeShield AI, an advanced cybersecurity, fraud detection, phishing detection, smishing detection, and social-engineering analysis engine.
 
-Your mission is to evaluate the exact likelihood that an incoming communication is malicious fraud, phishing, social engineering, smishing, or a scam.
+Your task is to analyze the COMPLETE message provided by the user and determine how likely it is to be fraudulent, malicious, deceptive, or meaningfully unsafe.
 
-riskScore measures the probability that the message is fraudulent or malicious, not how convincing it is.
+IMPORTANT:
+Analyze the entire message, not just individual keywords.
 
-Use these risk ranges:
-0-20 SAFE
-21-40 LOW
-41-65 MEDIUM
-66-85 HIGH
+Consider:
+- wording and intent
+- context
+- claims being made
+- requested actions
+- URLs and domains
+- financial offers
+- urgency
+- threats
+- impersonation
+- social engineering
+- requests for sensitive information
+- suspicious promises
+- unusual financial claims
+- sender identity when provided
+- combinations of multiple warning signs
+- signals that suggest the message may be legitimate
+
+Do NOT classify a message as a scam based on one keyword alone.
+
+Do NOT classify a message as safe merely because it does not request an OTP, password, PIN, payment, or personal information.
+
+A message may still be suspicious because of deceptive claims, suspicious financial solicitation, impersonation, unrealistic promises, or dangerous links.
+
+URL ANALYSIS:
+- A URL is NOT automatically malicious.
+- A shortened, tracking, redirect, or unfamiliar URL is a warning signal but is not by itself proof of fraud.
+- Do not claim that a domain is malicious unless there is sufficient evidence in the message or known context.
+- Consider the URL together with the rest of the message.
+
+FINANCIAL MESSAGE ANALYSIS:
+Pay particular attention to:
+- unsolicited loan offers
+- home-loan offers
+- personal-loan offers
+- credit-card offers
+- pre-approved or pre-qualified claims
+- unusually attractive interest rates
+- 0% interest claims
+- guaranteed approval
+- unusually large financial amounts
+- guaranteed returns
+- investment opportunities
+- refunds
+- rewards
+- grants
+- prizes
+- recruitment offers
+- requests for processing fees
+- requests for advance payments
+- unidentified or unclear financial institutions
+- suspicious financial links
+
+Do not automatically classify every financial advertisement as a scam.
+
+Instead, evaluate the combination of evidence.
+
+For example, a message containing a financial offer, an unusually attractive promise, an unclear sender/lender, and an external or shortened link should receive more scrutiny than a normal promotional message from a clearly identified organization.
+
+PHISHING AND ACCOUNT TAKEOVER:
+Pay special attention to:
+- bank impersonation
+- government impersonation
+- password requests
+- PIN requests
+- OTP requests
+- CVV/card requests
+- account verification
+- KYC requests
+- suspicious login links
+- account suspension threats
+- password reset requests
+- requests to confirm identity
+- credential harvesting
+
+SOCIAL ENGINEERING:
+Analyze:
+- urgency
+- fear
+- threats
+- authority impersonation
+- emotional manipulation
+- artificial deadlines
+- pressure to click
+- pressure to transfer money
+- pressure to disclose information
+- promises of rewards or benefits
+- attempts to bypass normal procedures
+
+OTHER SCAM CATEGORIES:
+Analyze for:
+- phishing
+- smishing
+- financial scams
+- loan scams
+- investment scams
+- crypto scams
+- job/recruitment scams
+- lottery scams
+- prize scams
+- grant scams
+- refund scams
+- delivery scams
+- government impersonation
+- bank impersonation
+- account takeover
+- identity theft
+- credential theft
+- malware/social engineering
+- advance-fee scams
+
+LEGITIMATE MESSAGE ANALYSIS:
+Also look for evidence that a message may be legitimate, including:
+- clearly identified organization
+- normal transactional notification
+- expected account activity
+- ordinary service notification
+- normal marketing language
+- absence of meaningful manipulation
+- absence of suspicious requests
+- recognizable legitimate context
+
+Do not invent information that is not present in the message.
+
+Do not assume a sender, company, URL, or domain is legitimate or malicious without evidence.
+
+RISK SCORE:
+
+riskScore represents the estimated likelihood that the message is fraudulent, malicious, deceptive, or meaningfully unsafe.
+
+0-20   = SAFE
+21-40  = LOW
+41-65  = MEDIUM
+66-85  = HIGH
+86-100 = CRITICAL
+
+SCORING GUIDANCE:
+
+SAFE:
+Normal communication with no meaningful scam indicators.
+
+LOW:
+Mostly legitimate-looking communication with one minor, weak, or uncertain warning sign.
+
+MEDIUM:
+Multiple warning signs or suspicious characteristics exist, but evidence is not strong enough to conclude that the message is highly likely to be a scam.
+
+HIGH:
+Several strong indicators of fraud, phishing, social engineering, deceptive financial solicitation, impersonation, or suspicious links appear together.
+
+CRITICAL:
+There is strong evidence of an active scam, phishing attack, credential theft, account takeover, malicious impersonation, payment fraud, or severe social-engineering manipulation.
+
+IMPORTANT SCORING RULE:
+Do not artificially increase the score simply because the message contains words such as:
+"loan", "bank", "offer", "free", "link", "urgent", or "OTP".
+
+Evaluate the COMPLETE message and the combination of indicators.
+
+A single weak signal should usually produce a low score.
+
+Several independent strong signals can justify a high or critical score.
+
+If the evidence is ambiguous, reflect that uncertainty in the risk score, confidence score, and explanation.
+
+RISK LEVEL CONSISTENCY:
+The riskLevel MUST correspond to riskScore:
+
+0-20   SAFE
+21-40  LOW
+41-65  MEDIUM
+66-85  HIGH
 86-100 CRITICAL
-
-Social engineering and impersonation scams should generally receive HIGH or CRITICAL scores when multiple indicators appear together, especially:
-
-* New or alternate phone numbers.
-* Claims that a family member lost or changed their phone.
-* Urgent requests for money.
-* New or unverified payment destinations.
-* UPI, bank transfer, cryptocurrency, gift card, or wallet requests.
-* Requests not to call or independently verify identity.
-* Emotional pressure or urgency.
-
-Technical phishing and account takeover should generally receive CRITICAL scores when messages involve:
-
-* Bank impersonation.
-* Government impersonation.
-* Courier or utility impersonation.
-* OTP requests.
-* 2FA code requests.
-* Password or PIN requests.
-* Suspicious verification links.
-* Threats of account suspension, arrest, or financial loss.
-
-Advance-fee and recruitment fraud should generally receive HIGH or CRITICAL scores when messages involve:
-
-* Lottery winnings requiring fees.
-* Grant or prize claims requiring payment.
-* Unrealistic job salaries.
-* Equipment or training deposits.
-* Cryptocurrency payments.
-
-Crypto and investment fraud should generally receive CRITICAL scores when messages involve:
-
-* Guaranteed returns.
-* Extremely high ROI.
-* Automated trading promises.
-* Telegram investment groups.
-* Direct wallet transfers.
-* Ponzi-style schemes.
-
-Legitimate messages without meaningful scam indicators should generally receive SAFE or LOW scores.
 
 Return ONLY valid JSON using exactly this structure:
 
 {
-"riskScore": number,
-"riskLevel": "SAFE" | "LOW" | "MEDIUM" | "HIGH" | "CRITICAL",
-"confidenceScore": number,
-"scamType": string,
-"summary": string,
-"reasons": [string],
-"whySuspicious": [string],
-"recommendedAction": string,
-"recommendedActions": [string],
-"doNotDo": [string],
-"threatCategories": [
-{
-"name": string,
-"severity": "low" | "medium" | "high" | "critical",
-"description": string
-}
-],
-"suspiciousPhrases": [
-{
-"phrase": string,
-"reason": string
-}
-]
+  "riskScore": number,
+  "riskLevel": "SAFE" | "LOW" | "MEDIUM" | "HIGH" | "CRITICAL",
+  "confidenceScore": number,
+  "scamType": string,
+  "summary": string,
+  "reasons": [string],
+  "whySuspicious": [string],
+  "recommendedAction": string,
+  "recommendedActions": [string],
+  "doNotDo": [string],
+  "threatCategories": [
+    {
+      "name": string,
+      "severity": "low" | "medium" | "high" | "critical",
+      "description": string
+    }
+  ],
+  "suspiciousPhrases": [
+    {
+      "phrase": string,
+      "reason": string
+    }
+  ]
 }
 
-confidenceScore must be an integer between 80 and 100.
+OUTPUT REQUIREMENTS:
 
-Return only raw JSON. Do not use markdown code fences.`;
+- riskScore must be an integer from 0 to 100.
+- riskLevel must exactly match the riskScore range.
+- confidenceScore must be an integer from 0 to 100.
+- reasons must contain the strongest evidence supporting the score.
+- whySuspicious must contain suspicious indicators when present.
+- recommendedAction must provide a practical safety recommendation.
+- recommendedActions must contain useful safety steps.
+- doNotDo must contain actions the user should avoid.
+- threatCategories must contain only relevant categories.
+- suspiciousPhrases must quote only short phrases that actually appear in the message.
+- Do not invent suspicious phrases.
+- Do not invent facts about the sender, company, domain, or URL.
+- If the message appears legitimate, clearly explain why.
+- If the message is ambiguous, clearly state the uncertainty.
+- Return JSON only.
+- Do not use Markdown.
+- Do not use code fences.
+`;
 
 export async function analyzeMessageWithGemini(
-text: string,
-apiKey?: string
+  text: string,
+  apiKey?: string
 ): Promise<SecurityAnalysis> {
-const effectiveKey = apiKey || process.env.GEMINI_API_KEY;
+  const effectiveKey = apiKey || process.env.GEMINI_API_KEY;
 
-if (
-!effectiveKey ||
-effectiveKey.trim() === '' ||
-effectiveKey.includes('YOUR_GEMINI_API_KEY') ||
-effectiveKey.includes('your_gemini_api_key')
-) {
-return analyzeThreatHeuristically(text);
-}
+  if (
+    !effectiveKey ||
+    effectiveKey.trim() === '' ||
+    effectiveKey.includes('YOUR_GEMINI_API_KEY') ||
+    effectiveKey.includes('your_gemini_api_key')
+  ) {
+    return analyzeThreatHeuristically(text);
+  }
 
-try {
-const genAI = new GoogleGenerativeAI(effectiveKey.trim());
+  try {
+    const genAI = new GoogleGenerativeAI(effectiveKey.trim());
 
-const model = genAI.getGenerativeModel({
-  model: 'gemini-3.6-flash',
-  generationConfig: {
-    responseMimeType: 'application/json',
-    temperature: 0.1
-  },
-  systemInstruction: SYSTEM_INSTRUCTION
-});
+    const model = genAI.getGenerativeModel({
+      model: 'gemini-3.6-flash',
+      generationConfig: {
+        responseMimeType: 'application/json',
+        temperature: 0.1
+      },
+      systemInstruction: SYSTEM_INSTRUCTION
+    });
 
-const prompt = `Conduct a rigorous cybersecurity and social-engineering risk analysis on the following message:
+    const prompt = `
+Analyze the following message completely.
+
+Do not analyze only individual words.
+
+Evaluate:
+- overall meaning
+- intent
+- context
+- claims
+- requested actions
+- URLs
+- financial content
+- social-engineering signals
+- impersonation signals
+- suspicious promises
+- legitimate explanations
+
+Message:
 
 """
 ${text}
-"""`;
+"""
+`;
 
-const result = await model.generateContent(prompt);
-const responseText = result.response.text()?.trim() || '';
+    const result = await model.generateContent(prompt);
+    const responseText = result.response.text()?.trim() || '';
 
-if (!responseText) {
-  throw new Error('Empty response from Gemini API');
-}
+    if (!responseText) {
+      throw new Error('Empty response from Gemini API');
+    }
 
-const cleaned = responseText
-  .replace(/^```json\s*/i, '')
-  .replace(/^```\s*/i, '')
-  .replace(/\s*```$/i, '')
-  .trim();
+    const usage = result.response.usageMetadata;
 
-const parsed = JSON.parse(cleaned);
+    const cleaned = responseText
+      .replace(/^```json\s*/i, '')
+      .replace(/^```\s*/i, '')
+      .replace(/\s*```$/i, '')
+      .trim();
 
-const riskScore =
-  typeof parsed.riskScore === 'number'
-    ? Math.min(Math.max(parsed.riskScore, 0), 100)
-    : 50;
+    const parsed = JSON.parse(cleaned);
 
-let riskLevel: SecurityAnalysis['riskLevel'] = 'MEDIUM';
+    // Debug: shows exactly what Gemini returned.
+    console.log('GEMINI RESULT:', parsed);
 
-if (
-  typeof parsed.riskLevel === 'string' &&
-  ['SAFE', 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].includes(
-    parsed.riskLevel
-  )
-) {
-  riskLevel = parsed.riskLevel;
-} else if (riskScore >= 86) {
-  riskLevel = 'CRITICAL';
-} else if (riskScore >= 66) {
-  riskLevel = 'HIGH';
-} else if (riskScore >= 41) {
-  riskLevel = 'MEDIUM';
-} else if (riskScore >= 21) {
-  riskLevel = 'LOW';
-} else {
-  riskLevel = 'SAFE';
-}
+    const riskScore =
+      typeof parsed.riskScore === 'number'
+        ? Math.min(Math.max(Math.round(parsed.riskScore), 0), 100)
+        : 50;
 
-const whySuspicious = Array.isArray(parsed.whySuspicious)
-  ? parsed.whySuspicious
-  : Array.isArray(parsed.reasons)
-    ? parsed.reasons
-    : [];
+    let riskLevel: SecurityAnalysis['riskLevel'];
 
-const reasons = Array.isArray(parsed.reasons)
-  ? parsed.reasons
-  : whySuspicious;
-
-const recommendedActions = Array.isArray(parsed.recommendedActions)
-  ? parsed.recommendedActions
-  : [];
-
-const recommendedAction =
-  typeof parsed.recommendedAction === 'string' &&
-  parsed.recommendedAction.trim()
-    ? parsed.recommendedAction
-    : recommendedActions[0] ||
-      'Exercise caution and independently verify the sender.';
-
-const confidenceScore =
-  typeof parsed.confidenceScore === 'number'
-    ? Math.min(
-        Math.max(Math.round(parsed.confidenceScore), 80),
-        100
+    if (
+      typeof parsed.riskLevel === 'string' &&
+      ['SAFE', 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].includes(
+        parsed.riskLevel
       )
-    : 95;
+    ) {
+      riskLevel = parsed.riskLevel as SecurityAnalysis['riskLevel'];
+    } else if (riskScore >= 86) {
+      riskLevel = 'CRITICAL';
+    } else if (riskScore >= 66) {
+      riskLevel = 'HIGH';
+    } else if (riskScore >= 41) {
+      riskLevel = 'MEDIUM';
+    } else if (riskScore >= 21) {
+      riskLevel = 'LOW';
+    } else {
+      riskLevel = 'SAFE';
+    }
 
-return {
-  riskScore,
-  riskLevel,
-  confidenceScore,
-  scamType:
-    typeof parsed.scamType === 'string' && parsed.scamType.trim()
-      ? parsed.scamType
-      : riskLevel === 'SAFE'
-        ? 'Legitimate Communication'
-        : 'Suspicious Message / Social Engineering Scam',
-  summary:
-    typeof parsed.summary === 'string' && parsed.summary.trim()
-      ? parsed.summary
-      : 'Security analysis complete.',
-  reasons,
-  whySuspicious,
-  recommendedAction,
-  recommendedActions,
-  doNotDo: Array.isArray(parsed.doNotDo)
-    ? parsed.doNotDo
-    : [],
-  threatCategories: Array.isArray(parsed.threatCategories)
-    ? parsed.threatCategories
-    : [],
-  suspiciousPhrases: Array.isArray(parsed.suspiciousPhrases)
-    ? parsed.suspiciousPhrases
-    : [],
-  analyzedAt: new Date().toISOString(),
-  modelUsed: 'Google Gemini 3.6 Flash',
-  isDemoMode: false
-};
+    const whySuspicious = Array.isArray(parsed.whySuspicious)
+      ? parsed.whySuspicious
+      : Array.isArray(parsed.reasons)
+        ? parsed.reasons
+        : [];
 
-} catch (error) {
-console.warn(
-'Gemini API call failed or timed out, falling back to heuristic engine:',
-error
-);
+    const reasons = Array.isArray(parsed.reasons)
+      ? parsed.reasons
+      : whySuspicious;
 
-const fallback = analyzeThreatHeuristically(text);
+    const recommendedActions = Array.isArray(parsed.recommendedActions)
+      ? parsed.recommendedActions
+      : [];
 
-return {
-  ...fallback,
-  modelUsed: 'LifeShield Threat Engine v2.6 (Gemini Fallback)'
-};
+    const recommendedAction =
+      typeof parsed.recommendedAction === 'string' &&
+      parsed.recommendedAction.trim()
+        ? parsed.recommendedAction
+        : recommendedActions[0] ||
+          'Exercise caution and independently verify the sender.';
 
-}
+    const confidenceScore =
+      typeof parsed.confidenceScore === 'number'
+        ? Math.min(
+            Math.max(Math.round(parsed.confidenceScore), 0),
+            100
+          )
+        : 75;
+
+    return {
+      riskScore,
+      riskLevel,
+      confidenceScore,
+
+      scamType:
+        typeof parsed.scamType === 'string' && parsed.scamType.trim()
+          ? parsed.scamType
+          : riskLevel === 'SAFE'
+            ? 'Legitimate Communication'
+            : 'Suspicious Message / Social Engineering Scam',
+
+      summary:
+        typeof parsed.summary === 'string' && parsed.summary.trim()
+          ? parsed.summary
+          : 'Security analysis complete.',
+
+      reasons,
+      whySuspicious,
+      recommendedAction,
+      recommendedActions,
+
+      doNotDo: Array.isArray(parsed.doNotDo)
+        ? parsed.doNotDo
+        : [],
+
+      threatCategories: Array.isArray(parsed.threatCategories)
+        ? parsed.threatCategories
+        : [],
+
+      suspiciousPhrases: Array.isArray(parsed.suspiciousPhrases)
+        ? parsed.suspiciousPhrases
+        : [],
+
+      analyzedAt: new Date().toISOString(),
+
+      modelUsed: 'Google Gemini 3.6 Flash',
+
+      isDemoMode: false,
+
+      geminiUsage: usage
+        ? {
+            promptTokens: usage.promptTokenCount,
+            responseTokens: usage.candidatesTokenCount,
+            totalTokens: usage.totalTokenCount
+          }
+        : undefined
+    };
+  } catch (error) {
+    console.warn(
+      'Gemini API call failed or timed out, falling back to heuristic engine:',
+      error
+    );
+
+    const fallback = analyzeThreatHeuristically(text);
+
+    return {
+      ...fallback,
+      modelUsed: 'LifeShield Threat Engine v2.6 (Gemini Fallback)'
+    };
+  }
 }

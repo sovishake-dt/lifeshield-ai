@@ -11,22 +11,29 @@ export interface SuspiciousPhrase {
   reason: string;
 }
 
+export interface GeminiUsage {
+  promptTokens?: number;
+  responseTokens?: number;
+  totalTokens?: number;
+}
+
 export interface SecurityAnalysis {
-  riskScore: number; // 0 to 100
+  riskScore: number;
   riskLevel: RiskLevel;
-  confidenceScore: number; // 0 to 100 percentage
-  scamType: string; // Specific scam taxonomy name
+  confidenceScore: number;
+  scamType: string;
   summary: string;
   threatCategories: ThreatCategory[];
   suspiciousPhrases: SuspiciousPhrase[];
   whySuspicious: string[];
-  reasons: string[]; // Standardized reasons list
+  reasons: string[];
   recommendedActions: string[];
-  recommendedAction: string; // Primary recommended action
+  recommendedAction: string;
   doNotDo: string[];
   analyzedAt: string;
   modelUsed: string;
   isDemoMode: boolean;
+  geminiUsage?: GeminiUsage;
 }
 
 export interface PresetScenario {
