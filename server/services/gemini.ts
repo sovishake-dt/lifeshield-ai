@@ -1,6 +1,5 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { SecurityAnalysis } from '../types.js';
-import { analyzeThreatHeuristically } from './threatAnalyzer.js';
 
 const SYSTEM_INSTRUCTION = `
 You are LifeShield AI, an advanced cybersecurity, fraud detection, phishing detection, smishing detection, and social-engineering analysis engine.
@@ -239,13 +238,25 @@ export async function analyzeMessageWithGemini(
 ): Promise<SecurityAnalysis> {
   const effectiveKey = apiKey || process.env.GEMINI_API_KEY;
 
+  /*
+   * IMPORTANT:
+   * Do NOT use the heuristic analyzer here.
+   *
+   * If Gemini is unavailable, the error must reach the backend.
+   * This allows the frontend to show:
+   *
+   * "AI Analysis Temporarily Unavailable"
+   *
+   * instead of showing a fake/fallback risk score.
+   */
+
   if (
     !effectiveKey ||
     effectiveKey.trim() === '' ||
     effectiveKey.includes('YOUR_GEMINI_API_KEY') ||
     effectiveKey.includes('your_gemini_api_key')
   ) {
-    return analyzeThreatHeuristically(text);
+    throw new Error('GEMINI_API_KEY_NOT_CONFIGURED');
   }
 
   try {
@@ -253,10 +264,12 @@ export async function analyzeMessageWithGemini(
 
     const model = genAI.getGenerativeModel({
       model: 'gemini-3.6-flash',
+
       generationConfig: {
         responseMimeType: 'application/json',
         temperature: 0.1
       },
+
       systemInstruction: SYSTEM_INSTRUCTION
     });
 
@@ -286,10 +299,12 @@ ${text}
 `;
 
     const result = await model.generateContent(prompt);
-    const responseText = result.response.text()?.trim() || '';
+
+    const responseText =
+      result.response.text()?.trim() || '';
 
     if (!responseText) {
-      throw new Error('Empty response from Gemini API');
+      throw new Error('EMPTY_GEMINI_RESPONSE');
     }
 
     const usage = result.response.usageMetadata;
@@ -302,23 +317,33 @@ ${text}
 
     const parsed = JSON.parse(cleaned);
 
-    // Debug: shows exactly what Gemini returned.
     console.log('GEMINI RESULT:', parsed);
 
     const riskScore =
       typeof parsed.riskScore === 'number'
-        ? Math.min(Math.max(Math.round(parsed.riskScore), 0), 100)
+        ? Math.min(
+            Math.max(
+              Math.round(parsed.riskScore),
+              0
+            ),
+            100
+          )
         : 50;
 
     let riskLevel: SecurityAnalysis['riskLevel'];
 
     if (
       typeof parsed.riskLevel === 'string' &&
-      ['SAFE', 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].includes(
-        parsed.riskLevel
-      )
+      [
+        'SAFE',
+        'LOW',
+        'MEDIUM',
+        'HIGH',
+        'CRITICAL'
+      ].includes(parsed.riskLevel)
     ) {
-      riskLevel = parsed.riskLevel as SecurityAnalysis['riskLevel'];
+      riskLevel =
+        parsed.riskLevel as SecurityAnalysis['riskLevel'];
     } else if (riskScore >= 86) {
       riskLevel = 'CRITICAL';
     } else if (riskScore >= 66) {
@@ -331,19 +356,22 @@ ${text}
       riskLevel = 'SAFE';
     }
 
-    const whySuspicious = Array.isArray(parsed.whySuspicious)
-      ? parsed.whySuspicious
-      : Array.isArray(parsed.reasons)
+    const whySuspicious =
+      Array.isArray(parsed.whySuspicious)
+        ? parsed.whySuspicious
+        : Array.isArray(parsed.reasons)
+          ? parsed.reasons
+          : [];
+
+    const reasons =
+      Array.isArray(parsed.reasons)
         ? parsed.reasons
+        : whySuspicious;
+
+    const recommendedActions =
+      Array.isArray(parsed.recommendedActions)
+        ? parsed.recommendedActions
         : [];
-
-    const reasons = Array.isArray(parsed.reasons)
-      ? parsed.reasons
-      : whySuspicious;
-
-    const recommendedActions = Array.isArray(parsed.recommendedActions)
-      ? parsed.recommendedActions
-      : [];
 
     const recommendedAction =
       typeof parsed.recommendedAction === 'string' &&
@@ -355,7 +383,10 @@ ${text}
     const confidenceScore =
       typeof parsed.confidenceScore === 'number'
         ? Math.min(
-            Math.max(Math.round(parsed.confidenceScore), 0),
+            Math.max(
+              Math.round(parsed.confidenceScore),
+              0
+            ),
             100
           )
         : 75;
@@ -366,33 +397,41 @@ ${text}
       confidenceScore,
 
       scamType:
-        typeof parsed.scamType === 'string' && parsed.scamType.trim()
+        typeof parsed.scamType === 'string' &&
+        parsed.scamType.trim()
           ? parsed.scamType
           : riskLevel === 'SAFE'
             ? 'Legitimate Communication'
             : 'Suspicious Message / Social Engineering Scam',
 
       summary:
-        typeof parsed.summary === 'string' && parsed.summary.trim()
+        typeof parsed.summary === 'string' &&
+        parsed.summary.trim()
           ? parsed.summary
           : 'Security analysis complete.',
 
       reasons,
+
       whySuspicious,
+
       recommendedAction,
+
       recommendedActions,
 
-      doNotDo: Array.isArray(parsed.doNotDo)
-        ? parsed.doNotDo
-        : [],
+      doNotDo:
+        Array.isArray(parsed.doNotDo)
+          ? parsed.doNotDo
+          : [],
 
-      threatCategories: Array.isArray(parsed.threatCategories)
-        ? parsed.threatCategories
-        : [],
+      threatCategories:
+        Array.isArray(parsed.threatCategories)
+          ? parsed.threatCategories
+          : [],
 
-      suspiciousPhrases: Array.isArray(parsed.suspiciousPhrases)
-        ? parsed.suspiciousPhrases
-        : [],
+      suspiciousPhrases:
+        Array.isArray(parsed.suspiciousPhrases)
+          ? parsed.suspiciousPhrases
+          : [],
 
       analyzedAt: new Date().toISOString(),
 
@@ -402,23 +441,40 @@ ${text}
 
       geminiUsage: usage
         ? {
-            promptTokens: usage.promptTokenCount,
-            responseTokens: usage.candidatesTokenCount,
-            totalTokens: usage.totalTokenCount
+            promptTokens:
+              usage.promptTokenCount,
+
+            responseTokens:
+              usage.candidatesTokenCount,
+
+            totalTokens:
+              usage.totalTokenCount
           }
         : undefined
     };
   } catch (error) {
+    /*
+     * VERY IMPORTANT:
+     *
+     * Do NOT call analyzeThreatHeuristically()
+     * here.
+     *
+     * Every Gemini error, including:
+     *
+     * 429 Too Many Requests
+     * quota exceeded
+     * network error
+     * authentication error
+     * timeout
+     *
+     * must be passed to the backend.
+     */
+
     console.warn(
-      'Gemini API call failed or timed out, falling back to heuristic engine:',
+      'Gemini API request failed:',
       error
     );
 
-    const fallback = analyzeThreatHeuristically(text);
-
-    return {
-      ...fallback,
-      modelUsed: 'LifeShield Threat Engine v2.6 (Gemini Fallback)'
-    };
+    throw error;
   }
 }
